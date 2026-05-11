@@ -111,7 +111,29 @@ app.get("/health", (req, res) => {
 });
 
 // ============================================
-// 8. تشغيل الخادم
+// 8. نقطة اختبار الاتصال بـ Make.com (للتجربة فقط)
+// ============================================
+app.get("/test-make", async (req, res) => {
+  try {
+    const response = await fetch(MAKE_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "هذه رسالة اختبار من الخادم",
+        platform: "test",
+        senderId: "test123",
+        senderName: "مستخدم تجريبي"
+      }),
+    });
+    const result = await response.json();
+    res.json({ success: true, makeResponse: result });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// 9. تشغيل الخادم
 // ============================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
