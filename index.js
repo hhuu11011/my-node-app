@@ -90,11 +90,43 @@ app.post("/webhook/:customerId", async (req, res) => {
     const makeResult = await makeResponse.json();
 
     // إرسال الرد النهائي
-    res.json({
-      reply: makeResult.reply || "شكراً لتواصلك. سيتم الرد عليك قريباً.",
-      emotion: makeResult.emotion,
-      intent: makeResult.intent,
-    });
+    // محاولة استخراج الرد من عدة أماكن ممكنة
+let finalReply = "شكراً لتواصلك. سيتم الرد عليك قريباً.";
+let finalEmotion = "neutral";
+let finalIntent = "other";
+
+if (makeResult.reply) {
+  finalReply = makeResult.reply;
+  finalEmotion = makeResult.emotion || "neutral";
+  finalIntent = makeResult.intent || "other";
+} else if (makeResult.result) {
+  // إذا كان الرد داخل result كنص، نحاول تحويله إلى JSON
+  try {
+    const parsed = JSON.parse(makeResult.result);
+    finalReply = parsed.reply || finalReply;
+    finalEmotion = parsed.emotion || finalEmotion;
+    finalIntent = parsed.intent || finalIntent;
+  } catch(e) {
+    finalReply = makeResult.result;
+  }
+} else if (makeResult.choices && makeResult.choices[0] && makeResult.choices[0].message) {
+  // إذا كان الرد في بنية OpenAI المباشرة
+  const content = makeResult.choices[0].message.content;
+  try {
+    const parsed = JSON.parse(content);
+    finalReply = parsed.reply || content;
+    finalEmotion = parsed.emotion || finalEmotion;
+    finalIntent = parsed.intent || finalIntent;
+  } catch(e) {
+    finalReply = content;
+  }
+}
+
+res.json({
+  reply: finalReply,
+  emotion: finalEmotion,
+  intent: finalIntent,
+});
   } catch (error) {
     console.error("Make.com error:", error);
     res.json({
