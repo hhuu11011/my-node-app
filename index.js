@@ -81,17 +81,25 @@ app.post("/webhook/:customerId", async (req, res) => {
       }),
     });
 
-    const makeResult = await makeResponse.json();
+    // محاولة قراءة الرد حتى لو لم يكن JSON صحيحاً
+    let makeResult;
+    const responseText = await makeResponse.text();
+    
+    try {
+      makeResult = JSON.parse(responseText);
+    } catch (e) {
+      // إذا لم يكن JSON صحيحاً، نستخدم النص كرد
+      makeResult = { reply: responseText };
+    }
 
     // ==========================================
-    // معالجة الرد من Make.com (التعديل الجديد)
+    // معالجة الرد من Make.com
     // ==========================================
     let finalReply = "شكراً لتواصلك. سيتم الرد عليك قريباً.";
     let finalEmotion = "neutral";
     let finalIntent = "other";
 
     if (typeof makeResult === 'string') {
-      // إذا كان الرد نصاً عادياً
       finalReply = makeResult;
     } else if (makeResult.reply) {
       finalReply = makeResult.reply;
@@ -117,8 +125,7 @@ app.post("/webhook/:customerId", async (req, res) => {
         finalReply = content;
       }
     } else {
-      // إذا لم نجد أي شيء، نرسل الرد كما هو
-      finalReply = JSON.stringify(makeResult);
+      finalReply = responseText;
     }
 
     res.json({
@@ -158,7 +165,15 @@ app.get("/test-make", async (req, res) => {
         senderName: "مستخدم تجريبي"
       }),
     });
-    const result = await response.json();
+    
+    const responseText = await response.text();
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch(e) {
+      result = { reply: responseText };
+    }
+    
     res.json({ success: true, makeResponse: result });
   } catch (error) {
     res.json({ success: false, error: error.message });
