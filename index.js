@@ -11,30 +11,29 @@ app.use(express.json());
 // ============================================
 // 1. الاتصال بقاعدة بيانات Supabase
 // ============================================
-// ⚠️ استبدل هذه القيم بقيم حسابك في Supabase
-const supabaseUrl = "https://wwlzblztysghxxlgxcnp.supabase.co"; // من إعدادات Supabase
-const supabaseKey = "sb_publishable_5owjaAAZadbSrA7Zstd7dg_V2-zXKR9"; // من إعدادات Supabase
+const supabaseUrl = "https://wwlzblztysghxxlgxcnp.supabase.co";
+const supabaseKey = "sb_publishable_5owjaAAZadbSrA7Zstd7dg_V2-zXKR9";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ============================================
 // 2. تخزين مؤقت للطلبات (لمنع التكرار)
 // ============================================
-const recentRequests = new Map(); // لمنع معالجة نفس الرسالة مرتين
+const recentRequests = new Map();
 
 // ============================================
-// 3. عنوان Make.com الرئيسي (سيناريوك الرئيسي)
+// 3. عنوان Make.com الرئيسي
 // ============================================
 const MAKE_WEBHOOK_URL =
-  "https://hook.eu1.make.com/wxaqlfw5qw7j6m5752j51856ia931ryv"; // استبدله برابط السيناريو الرئيسي على Make.com
+  "https://hook.eu1.make.com/wxaqlfw5qw7j6m5752j51856ia931ryv";
 
 // ============================================
-// 4. نقطة الاستقبال الرئيسية (كل العملاء يرسلون هنا)
+// 4. نقطة الاستقبال الرئيسية
 // ============================================
 app.post("/webhook/:customerId", async (req, res) => {
   const customerId = req.params.customerId;
   const { message, platform, senderId, senderName } = req.body;
 
-  // منع تكرار المعالجة (نفس الرسالة خلال 10 ثوانٍ)
+  // منع تكرار المعالجة
   const requestKey = `${customerId}_${senderId}_${message.substring(0, 30)}`;
   if (recentRequests.has(requestKey)) {
     return res.status(200).send("Duplicate ignored");
@@ -42,9 +41,7 @@ app.post("/webhook/:customerId", async (req, res) => {
   recentRequests.set(requestKey, Date.now());
   setTimeout(() => recentRequests.delete(requestKey), 10000);
 
-  // ==========================================
-  // 5. التحقق من اشتراك العميل
-  // ==========================================
+  // التحقق من اشتراك العميل
   const { data: customer, error } = await supabase
     .from("customers")
     .select("*")
@@ -57,7 +54,6 @@ app.post("/webhook/:customerId", async (req, res) => {
     });
   }
 
-  // التحقق من صلاحية الاشتراك
   const subscriptionActive =
     customer.subscription_status === "active" &&
     new Date(customer.subscription_end) > new Date();
@@ -69,9 +65,7 @@ app.post("/webhook/:customerId", async (req, res) => {
     });
   }
 
-  // ==========================================
-  // 6. إعادة توجيه الرسالة إلى Make.com للمعالجة الذكية
-  // ==========================================
+  // إعادة توجيه الرسالة إلى Make.com
   try {
     const makeResponse = await fetch(MAKE_WEBHOOK_URL, {
       method: "POST",
@@ -89,61 +83,68 @@ app.post("/webhook/:customerId", async (req, res) => {
 
     const makeResult = await makeResponse.json();
 
-    // إرسال الرد النهائي
-    // محاولة استخراج الرد من عدة أماكن ممكنة
-let finalReply = "شكراً لتواصلك. سيتم الرد عليك قريباً.";
-let finalEmotion = "neutral";
-let finalIntent = "other";
+    // ==========================================
+    // معالجة الرد من Make.com (التعديل الجديد)
+    // ==========================================
+    let finalReply = "شكراً لتواصلك. سيتم الرد عليك قريباً.";
+    let finalEmotion = "neutral";
+    let finalIntent = "other";
 
-if (makeResult.reply) {
-  finalReply = makeResult.reply;
-  finalEmotion = makeResult.emotion || "neutral";
-  finalIntent = makeResult.intent || "other";
-} else if (makeResult.result) {
-  // إذا كان الرد داخل result كنص، نحاول تحويله إلى JSON
-  try {
-    const parsed = JSON.parse(makeResult.result);
-    finalReply = parsed.reply || finalReply;
-    finalEmotion = parsed.emotion || finalEmotion;
-    finalIntent = parsed.intent || finalIntent;
-  } catch(e) {
-    finalReply = makeResult.result;
-  }
-} else if (makeResult.choices && makeResult.choices[0] && makeResult.choices[0].message) {
-  // إذا كان الرد في بنية OpenAI المباشرة
-  const content = makeResult.choices[0].message.content;
-  try {
-    const parsed = JSON.parse(content);
-    finalReply = parsed.reply || content;
-    finalEmotion = parsed.emotion || finalEmotion;
-    finalIntent = parsed.intent || finalIntent;
-  } catch(e) {
-    finalReply = content;
-  }
-}
+    if (typeof makeResult === 'string') {
+      // إذا كان الرد نصاً عادياً
+      finalReply = makeResult;
+    } else if (makeResult.reply) {
+      finalReply = makeResult.reply;
+      finalEmotion = makeResult.emotion || "neutral";
+      finalIntent = makeResult.intent || "other";
+    } else if (makeResult.result) {
+      try {
+        const parsed = JSON.parse(makeResult.result);
+        finalReply = parsed.reply || makeResult.result;
+        finalEmotion = parsed.emotion || "neutral";
+        finalIntent = parsed.intent || "other";
+      } catch(e) {
+        finalReply = makeResult.result;
+      }
+    } else if (makeResult.choices && makeResult.choices[0] && makeResult.choices[0].message) {
+      const content = makeResult.choices[0].message.content;
+      try {
+        const parsed = JSON.parse(content);
+        finalReply = parsed.reply || content;
+        finalEmotion = parsed.emotion || "neutral";
+        finalIntent = parsed.intent || "other";
+      } catch(e) {
+        finalReply = content;
+      }
+    } else {
+      // إذا لم نجد أي شيء، نرسل الرد كما هو
+      finalReply = JSON.stringify(makeResult);
+    }
 
-res.json({
-  reply: finalReply,
-  emotion: finalEmotion,
-  intent: finalIntent,
-});
+    res.json({
+      reply: finalReply,
+      emotion: finalEmotion,
+      intent: finalIntent,
+    });
   } catch (error) {
     console.error("Make.com error:", error);
     res.json({
       reply: "عذراً، حدث خطأ تقني. يرجى المحاولة مرة أخرى لاحقاً.",
+      emotion: "neutral",
+      intent: "other",
     });
   }
 });
 
 // ============================================
-// 7. نقطة للتحقق من صحة الخادم (للتأكد من أنه يعمل)
+// 5. نقطة فحص صحة الخادم
 // ============================================
 app.get("/health", (req, res) => {
   res.json({ status: "active", timestamp: new Date().toISOString() });
 });
 
 // ============================================
-// 8. نقطة اختبار الاتصال بـ Make.com (للتجربة فقط)
+// 6. نقطة اختبار الاتصال بـ Make.com
 // ============================================
 app.get("/test-make", async (req, res) => {
   try {
@@ -165,7 +166,7 @@ app.get("/test-make", async (req, res) => {
 });
 
 // ============================================
-// 9. تشغيل الخادم
+// 7. تشغيل الخادم
 // ============================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
