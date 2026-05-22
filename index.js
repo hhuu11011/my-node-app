@@ -173,9 +173,65 @@ app.post("/webhook/:customerId", async (req, res) => {
     // ==========================================
     // نظام ذكي لاستخراج الرد
     // ==========================================
-    let finalReply = "شكراً لتواصلك. سيتم الرد عليك قريباً.";
+        let finalReply = "شكراً لتواصلك. سيتم الرد عليك قريباً.";
     let finalEmotion = "neutral";
     let finalIntent = "other";
+    let finalLanguage = "ar";
+    let needsHuman = false;
+    let collectedData = {};
+
+    // دالة ذكية لاستخراج البيانات من رد OpenAI
+    function extractFromOpenAI(data) {
+      // إذا كان الرد هو الكائن الكامل من OpenAI (المتغير {{2}})
+      if (data.choices && data.choices[0] && data.choices[0].message) {
+        const content = data.choices[0].message.content;
+        try {
+          const parsed = JSON.parse(content);
+          return {
+            reply: parsed.reply || content,
+            emotion: parsed.emotion || "neutral",
+            intent: parsed.intent || "other",
+            language: parsed.language || "ar",
+            needs_human: parsed.needs_human || false,
+            collected_data: parsed.collected_data || {}
+          };
+        } catch(e) {
+          return { reply: content, emotion: "neutral", intent: "other", language: "ar", needs_human: false, collected_data: {} };
+        }
+      }
+      // إذا كان الرد هو كائن مباشر
+      if (data.reply) {
+        return {
+          reply: data.reply,
+          emotion: data.emotion || "neutral",
+          intent: data.intent || "other",
+          language: data.language || "ar",
+          needs_human: data.needs_human || false,
+          collected_data: data.collected_data || {}
+        };
+      }
+      // إذا كان الرد نصاً فقط
+      if (typeof data === 'string') {
+        return { reply: data, emotion: "neutral", intent: "other", language: "ar", needs_human: false, collected_data: {} };
+      }
+      return { reply: JSON.stringify(data), emotion: "neutral", intent: "other", language: "ar", needs_human: false, collected_data: {} };
+    }
+
+    const extracted = extractFromOpenAI(makeResult);
+    finalReply = extracted.reply;
+    finalEmotion = extracted.emotion;
+    finalIntent = extracted.intent;
+    finalLanguage = extracted.language;
+    needsHuman = extracted.needs_human;
+    collectedData = extracted.collected_data;
+
+    console.log(`🌐 اللغة: ${finalLanguage}`);
+    console.log(`😊 المشاعر: ${finalEmotion}`);
+    console.log(`🎯 النية: ${finalIntent}`);
+    console.log(`👤 بيانات مجمعة:`, collectedData);
+    if (needsHuman) {
+      console.log(`⚠️ تنبيه: هذه الحالة تحتاج تدخل بشري!`);
+    }
 
     function extractReply(data) {
       if (typeof data === 'string') return data;
