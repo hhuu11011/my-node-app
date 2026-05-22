@@ -24,7 +24,7 @@ const recentRequests = new Map();
 // 3. عنوان Make.com الرئيسي
 // ============================================
 const MAKE_WEBHOOK_URL =
-  "https://hook.eu1.make.com/wxaqlfw5qw7j6m5752j51856ia931ryv";
+  "https://hook.eu1.make.com/db1um6goq3uwrgdn7nq7l9el31p2iudx";
 
 // ============================================
 // 4. واجهة ترحيبية
