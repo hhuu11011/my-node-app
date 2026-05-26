@@ -1,5 +1,5 @@
 // ============================================
-// الخادم المركزي لمنصة الرد الذكي - النسخة النهائية
+// الخادم المركزي لمنصة الرد الذكي - النسخة النهائية مع تكامل Meta WhatsApp
 // ============================================
 
 const express = require("express");
@@ -21,20 +21,27 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const recentRequests = new Map();
 
 // ============================================
-// 3. عنوان Make.com الرئيسي
+// 3. عنوان Make.com الرئيسي (سيناريو Main Webhook V2)
 // ============================================
 const MAKE_WEBHOOK_URL =
   "https://hook.eu1.make.com/db1um6goq3uwrgdn7nq7l9el31p2iudx";
 
 // ============================================
-// 4. واجهة ترحيبية
+// 3.1 بيانات اعتماد Meta WhatsApp (سيتم تعبئتها لاحقاً)
+// ============================================
+// سنقوم بإضافة Permanent Access Token و Phone Number ID لاحقاً
+let META_ACCESS_TOKEN = ""; // سيتم تعبئته من متغيرات البيئة أو لاحقاً
+let META_PHONE_NUMBER_ID = ""; // سيتم تعبئته لاحقاً
+
+// ============================================
+// 4. واجهة ترحيبية (Dashboard)
 // ============================================
 app.get("/", (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
-    <head>
-        <title>منصة الرد الذكي</title>
+       <head>
+        <title>منصة الرد الذكي - Evarial Cortex</title>
         <meta charset="UTF-8">
         <style>
             body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; background: #f5f5f5; direction: rtl; }
@@ -52,16 +59,16 @@ app.get("/", (req, res) => {
     </head>
     <body>
         <div class="container">
-            <h1>🤖 منصة الرد الذكي</h1>
-            <div class="status">✅ الخادم يعمل بنجاح</div>
+            <h1>🤖 Evarial Cortex - منصة الرد الذكي</h1>
+            <div class="status">✅ الخادم يعمل بنجاح | Meta Webhook جاهز</div>
             <div class="info">
                 <strong>📌 معلومات:</strong><br>
-                • هذا نظام تجريبي يحاكي تجربة العميل الحقيقية<br>
-                • اكتب رسالتك في الأسفل وسيتم الرد عليك تلقائياً<br>
-                • النظام يستخدم الذكاء الاصطناعي لفهم رسالتك والرد عليها
+                • هذا النظام متكامل مع واتساب عبر Meta API<br>
+                • يمكنك إرسال رسالة تجريبية من هنا أو من حساب واتساب المرتبط<br>
+                • النظام يستخدم الذكاء الاصطناعي لفهم رسالتك والرد عليها بجميع اللغات
             </div>
             <div class="test-area">
-                <h3>💬 جرب النظام الآن</h3>
+                <h3>💬 جرب النظام الآن (محاكي)</h3>
                 <input type="text" id="message" placeholder="اكتب رسالتك هنا... مثال: مرحباً، كم سعر المنتج؟">
                 <button onclick="sendMessage()">إرسال</button>
                 <div id="result" class="result" style="display:none;"></div>
@@ -98,7 +105,125 @@ app.get("/", (req, res) => {
 });
 
 // ============================================
-// 5. نقطة الاستقبال الرئيسية
+// 5. نقطة التحقق من Webhook لميتا (WhatsApp API)
+// ============================================
+// هذا المسار (Endpoint) هو الذي ستتواصل معه Meta للتحقق من صحة الرابط
+// Verify Token (رمز التحقق) يجب أن يكون مطابقاً لما هو مدخل في لوحة تحكم Meta
+app.get("/webhook", (req, res) => {
+  const verifyToken = "Automatix2026"; // استخدم الرمز الجديد الذي طلبته
+
+  // استخراج المعاملات (parameters) من طلب التحقق
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  // التحقق من صحة الطلب
+  if (mode === "subscribe" && token === verifyToken) {
+    console.log("✅ Webhook verified successfully with Meta!");
+    res.status(200).send(challenge); // يجب إرسال التحدي (challenge) كما هو
+  } else {
+    console.log("❌ Webhook verification failed. Invalid token or mode.");
+    res.sendStatus(403); // Forbidden
+  }
+});
+
+// ============================================
+// 6. نقطة استقبال الرسائل من ميتا (WhatsApp Webhook)
+// ============================================
+// عندما يرسل عميل رسالة عبر واتساب، سترسلها Meta إلى هذا المسار
+app.post("/webhook", (req, res) => {
+  const body = req.body;
+
+  console.log("📨 Received webhook from Meta:", JSON.stringify(body, null, 2));
+
+  // التأكد من أن الحدث (event) هو من حساب واتساب تجاري
+  if (body.object === "whatsapp_business_account") {
+    // معالجة كل الإدخالات (entries) في الجسم
+    body.entry.forEach(async (entry) => {
+      // استخراج التغييرات (changes)
+      const changes = entry.changes;
+      if (changes && changes[0] && changes[0].value) {
+        const messageObj = changes[0].value.messages;
+        // التأكد من وجود رسالة
+        if (messageObj && messageObj[0]) {
+          const message = messageObj[0];
+          const from = message.from; // رقم هاتف المرسل
+          const text = message.text?.body || "⚠️ رسالة بدون نص (قد تكون صورة أو مقطع)";
+
+          console.log(`💬 WhatsApp Message from ${from}: ${text}`);
+
+          // ==========================================
+          // هنا نبدأ عملية المعالجة الذكية للرسالة
+          // ==========================================
+          
+          // 1. إرسال الرسالة إلى Make.com لتحليلها عبر OpenAI
+          // 2. الحصول على الرد المناسب
+          // 3. إرسال الرد مرة أخرى إلى العميل عبر Meta API
+          
+          // مؤقتاً، نرسل رداً بسيطاً للتأكد من أن الاستقبال يعمل
+          // سنقوم لاحقاً باستبدال هذا الرد بالتكامل مع Make.com
+          const aiReply = "شكراً لتواصلك مع Evarial Cortex! نظام الرد الذكي يعمل الآن. كيف يمكنني مساعدتك؟";
+
+          // استدعاء دالة إرسال الرد
+          await sendWhatsAppMessage(from, aiReply);
+        }
+      }
+    });
+    // إرسال استجابة 200 لإعلام Meta بأننا استلمنا الرسالة بنجاح
+    res.sendStatus(200);
+  } else {
+    // إذا كان الطلب ليس من واتساب، نرفضه
+    res.sendStatus(404);
+  }
+});
+
+// ============================================
+// 6.1 دالة مساعدة لإرسال الرد عبر واتساب API
+// ============================================
+// هذه الدالة ستقوم بالتواصل مع Meta API لإرسال الرسالة إلى العميل
+async function sendWhatsAppMessage(to, message) {
+  // TODO: سيتم استبدال هذه القيم بالقيم الفعلية بعد الحصول عليها من Meta
+  const accessToken = META_ACCESS_TOKEN;
+  const phoneNumberId = META_PHONE_NUMBER_ID;
+
+  if (!accessToken || !phoneNumberId) {
+    console.error("❌ Meta credentials are missing. Please set META_ACCESS_TOKEN and META_PHONE_NUMBER_ID");
+    return;
+  }
+
+  const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
+
+  const data = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: to,
+    type: "text",
+    text: { body: message },
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+    if (response.ok) {
+      console.log(`✅ Message sent successfully to ${to}`);
+    } else {
+      console.error(`❌ Failed to send message to ${to}:`, result);
+    }
+  } catch (error) {
+    console.error(`❌ Error sending message to ${to}:`, error);
+  }
+}
+
+// ============================================
+// 7. نقطة الاستقبال الرئيسية للتجارب عبر الويب (نظام العميل التجريبي)
 // ============================================
 app.post("/webhook/:customerId", async (req, res) => {
   const customerId = req.params.customerId;
@@ -173,7 +298,7 @@ app.post("/webhook/:customerId", async (req, res) => {
     // ==========================================
     // نظام ذكي لاستخراج الرد
     // ==========================================
-        let finalReply = "شكراً لتواصلك. سيتم الرد عليك قريباً.";
+    let finalReply = "شكراً لتواصلك. سيتم الرد عليك قريباً.";
     let finalEmotion = "neutral";
     let finalIntent = "other";
     let finalLanguage = "ar";
@@ -182,7 +307,6 @@ app.post("/webhook/:customerId", async (req, res) => {
 
     // دالة ذكية لاستخراج البيانات من رد OpenAI
     function extractFromOpenAI(data) {
-      // إذا كان الرد هو الكائن الكامل من OpenAI (المتغير {{2}})
       if (data.choices && data.choices[0] && data.choices[0].message) {
         const content = data.choices[0].message.content;
         try {
@@ -199,7 +323,6 @@ app.post("/webhook/:customerId", async (req, res) => {
           return { reply: content, emotion: "neutral", intent: "other", language: "ar", needs_human: false, collected_data: {} };
         }
       }
-      // إذا كان الرد هو كائن مباشر
       if (data.reply) {
         return {
           reply: data.reply,
@@ -210,7 +333,6 @@ app.post("/webhook/:customerId", async (req, res) => {
           collected_data: data.collected_data || {}
         };
       }
-      // إذا كان الرد نصاً فقط
       if (typeof data === 'string') {
         return { reply: data, emotion: "neutral", intent: "other", language: "ar", needs_human: false, collected_data: {} };
       }
@@ -233,6 +355,7 @@ app.post("/webhook/:customerId", async (req, res) => {
       console.log(`⚠️ تنبيه: هذه الحالة تحتاج تدخل بشري!`);
     }
 
+    // دالة إضافية لاستخراج الرد النصي من أي هيكل
     function extractReply(data) {
       if (typeof data === 'string') return data;
       if (data.reply) return data.reply;
@@ -279,6 +402,9 @@ app.post("/webhook/:customerId", async (req, res) => {
       reply: finalReply,
       emotion: finalEmotion,
       intent: finalIntent,
+      language: finalLanguage,
+      needs_human: needsHuman,
+      collected_data: collectedData
     });
   } catch (error) {
     console.error("Make.com error:", error);
@@ -291,14 +417,14 @@ app.post("/webhook/:customerId", async (req, res) => {
 });
 
 // ============================================
-// 6. نقطة فحص صحة الخادم
+// 8. نقطة فحص صحة الخادم (Health Check)
 // ============================================
 app.get("/health", (req, res) => {
   res.json({ status: "active", timestamp: new Date().toISOString() });
 });
 
 // ============================================
-// 7. نقطة اختبار الاتصال بـ Make.com
+// 9. نقطة اختبار الاتصال بـ Make.com
 // ============================================
 app.get("/test-make", async (req, res) => {
   try {
@@ -328,10 +454,12 @@ app.get("/test-make", async (req, res) => {
 });
 
 // ============================================
-// 8. تشغيل الخادم
+// 10. تشغيل الخادم
 // ============================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`الخادم المركزي يعمل على المنفذ ${PORT}`);
-  console.log(`جاهز لاستقبال الطلبات من العملاء`);
+  console.log(`🚀 الخادم المركزي Evarial Cortex يعمل على المنفذ ${PORT}`);
+  console.log(`✅ جاهز لاستقبال الطلبات من العملاء وWebhooks من Meta`);
+  console.log(`🔗 رابط التحقق من الصحة: https://my-node-app-production-5923.up.railway.app/health`);
+  console.log(`🔗 رابط Webhook لميتا: https://my-node-app-production-5923.up.railway.app/webhook`);
 });
