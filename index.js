@@ -1,6 +1,6 @@
 // ============================================
-// الخادم المركزي لمنصة الرد الذكي
-// الإصدار النهائي مع تكامل Meta WhatsApp و Make.com
+// الخادم المركزي لمنصة الرد الذكي - Automatix
+// الإصدار النهائي المتكامل مع Meta WhatsApp API
 // ============================================
 
 const express = require("express");
@@ -30,12 +30,12 @@ const MAKE_WEBHOOK_URL =
 // ============================================
 // 4. بيانات اعتماد Meta WhatsApp (من متغيرات البيئة)
 // ============================================
-// الرمز الدائم (Permanent Access Token) - سيتم تعبئته من Railway Environment Variables
+// يتم قراءة الرمز المميز من متغيرات البيئة في Railway
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || "";
-// Phone Number ID (رقم تعريف رقم الهاتف التجاري)
-const META_PHONE_NUMBER_ID = "1107617902441383"; // استبدله بالقيمة الصحيحة
-// رقم الهاتف التجاري (للتوثيق والتحقق)
-const META_BUSINESS_PHONE_NUMBER = "+966531138572"; // استبدله بالقيمة الصحيحة
+// رقم تعريف رقم الهاتف التجاري (ضع الرقم الصحيح هنا)
+const META_PHONE_NUMBER_ID = "1107617902441383"; // ⚠️ استبدل هذا بالرقم الصحيح من ميتا
+// رقم الهاتف التجاري (للتوثيق فقط)
+const META_BUSINESS_PHONE_NUMBER = "+966531138572"; // ⚠️ استبدل هذا برقم هاتفك التجاري
 
 // ============================================
 // 5. واجهة ترحيبية (Dashboard)
@@ -116,6 +116,8 @@ app.get("/webhook", (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
+  console.log(`📞 Webhook verification request - mode: ${mode}, token: ${token}`);
+
   if (mode === "subscribe" && token === verifyToken) {
     console.log("✅ Webhook verified successfully with Meta!");
     res.status(200).send(challenge);
@@ -132,70 +134,88 @@ app.post("/webhook", async (req, res) => {
   const body = req.body;
   console.log("📨 Received webhook from Meta:", JSON.stringify(body, null, 2));
 
-  if (body.object === "whatsapp_business_account") {
-    for (const entry of body.entry) {
-      const changes = entry.changes;
-      if (changes && changes[0] && changes[0].value) {
-        const messageObj = changes[0].value.messages;
-        if (messageObj && messageObj[0]) {
-          const message = messageObj[0];
-          const from = message.from;
-          const text = message.text?.body || "⚠️ رسالة بدون نص";
+  // الرد فوراً لإعلام ميتا باستلام الرسالة (يمنع التكرار)
+  res.sendStatus(200);
 
-          console.log(`💬 WhatsApp Message from ${from}: ${text}`);
+  // معالجة الرسالة في الخلفية (حتى لا نؤخر الرد على ميتا)
+  setImmediate(async () => {
+    try {
+      if (body.object === "whatsapp_business_account") {
+        for (const entry of body.entry || []) {
+          for (const change of entry.changes || []) {
+            const value = change.value;
+            if (value && value.messages && value.messages[0]) {
+              const message = value.messages[0];
+              const from = message.from;
+              const text = message.text?.body || "";
 
-          // ==========================================
-          // معالجة الرسالة عبر Make.com (الذكاء الاصطناعي)
-          // ==========================================
-          try {
-            // إرسال الرسالة إلى Make.com لتحليلها
-            const makeResponse = await fetch(MAKE_WEBHOOK_URL, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                message: text,
-                platform: "whatsapp",
-                senderId: from,
-                senderName: "عميل واتساب",
-                language: "auto"
-              }),
-            });
+              if (!text) {
+                console.log("⚠️ Received non-text message (image, audio, etc.)");
+                return;
+              }
 
-            const responseText = await makeResponse.text();
-            let aiReply = "شكراً لتواصلك مع Automatix. كيف يمكنني مساعدتك؟";
-            
-            try {
-              const makeResult = JSON.parse(responseText);
-              aiReply = makeResult.reply || aiReply;
-            } catch (e) {
-              aiReply = responseText || aiReply;
+              console.log(`💬 WhatsApp Message from ${from}: "${text}"`);
+
+              // ==========================================
+              // معالجة الرسالة عبر الذكاء الاصطناعي
+              // ==========================================
+              let aiReply = "شكراً لتواصلك مع Automatix. كيف يمكنني مساعدتك؟";
+
+              try {
+                // إرسال الرسالة إلى Make.com
+                const makeResponse = await fetch(MAKE_WEBHOOK_URL, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    message: text,
+                    platform: "whatsapp",
+                    senderId: from,
+                    senderName: "عميل واتساب",
+                    language: "auto"
+                  }),
+                });
+
+                const responseText = await makeResponse.text();
+                
+                // محاولة استخراج الرد من Make.com
+                try {
+                  const makeResult = JSON.parse(responseText);
+                  aiReply = makeResult.reply || makeResult.message || responseText;
+                } catch (e) {
+                  aiReply = responseText;
+                }
+
+                console.log(`🤖 AI Reply: "${aiReply.substring(0, 100)}..."`);
+
+                // إرسال الرد إلى العميل
+                await sendWhatsAppMessage(from, aiReply);
+              } catch (error) {
+                console.error("❌ Error processing message with Make.com:", error);
+                await sendWhatsAppMessage(from, "عذراً، حدث خطأ تقني. يرجى المحاولة لاحقاً.");
+              }
             }
-
-            console.log(`🤖 AI Reply: ${aiReply}`);
-
-            // إرسال الرد الذكي إلى العميل عبر Meta API
-            await sendWhatsAppMessage(from, aiReply);
-          } catch (error) {
-            console.error("❌ Error processing message with Make.com:", error);
-            await sendWhatsAppMessage(from, "عذراً، حدث خطأ تقني. يرجى المحاولة لاحقاً.");
           }
         }
       }
+    } catch (error) {
+      console.error("❌ Error in webhook processing:", error);
     }
-    res.sendStatus(200);
-  } else {
-    res.sendStatus(404);
-  }
+  });
 });
 
 // ============================================
 // 8. دالة إرسال الرد عبر Meta API
 // ============================================
 async function sendWhatsAppMessage(to, message) {
-  if (!META_ACCESS_TOKEN || !META_PHONE_NUMBER_ID) {
-    console.error("❌ Meta credentials are missing. Please set META_ACCESS_TOKEN environment variable.");
-    console.error("❌ Phone Number ID:", META_PHONE_NUMBER_ID);
-    return;
+  // التحقق من وجود بيانات الاعتماد
+  if (!META_ACCESS_TOKEN) {
+    console.error("❌ META_ACCESS_TOKEN is missing! Please add it in Railway Variables.");
+    return false;
+  }
+
+  if (!META_PHONE_NUMBER_ID || META_PHONE_NUMBER_ID === "1107617902441383") {
+    console.error("❌ META_PHONE_NUMBER_ID is not set correctly! Please update it in the code.");
+    return false;
   }
 
   const url = `https://graph.facebook.com/v18.0/${META_PHONE_NUMBER_ID}/messages`;
@@ -205,10 +225,12 @@ async function sendWhatsAppMessage(to, message) {
     recipient_type: "individual",
     to: to,
     type: "text",
-    text: { body: message },
+    text: { body: message.substring(0, 4096) }, // الحد الأقصى لطول الرسالة
   };
 
   try {
+    console.log(`📤 Sending message to ${to}: "${message.substring(0, 50)}..."`);
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -219,18 +241,22 @@ async function sendWhatsAppMessage(to, message) {
     });
 
     const result = await response.json();
+
     if (response.ok) {
       console.log(`✅ Message sent successfully to ${to}`);
+      return true;
     } else {
       console.error(`❌ Failed to send message to ${to}:`, result);
+      return false;
     }
   } catch (error) {
     console.error(`❌ Error sending message to ${to}:`, error);
+    return false;
   }
 }
 
 // ============================================
-// 9. نقطة الاستقبال للتجارب عبر الويب (نظام العميل التجريبي)
+// 9. نقطة الاستقبال للتجارب عبر الويب
 // ============================================
 app.post("/webhook/:customerId", async (req, res) => {
   const customerId = req.params.customerId;
@@ -292,45 +318,24 @@ app.post("/webhook/:customerId", async (req, res) => {
     });
 
     const responseText = await makeResponse.text();
-    let makeResult;
-    try {
-      makeResult = JSON.parse(responseText);
-    } catch (e) {
-      makeResult = { reply: responseText };
-    }
-
     let finalReply = "شكراً لتواصلك. سيتم الرد عليك قريباً.";
-    let finalEmotion = "neutral";
-    let finalIntent = "other";
 
-    function extractReply(data) {
-      if (typeof data === 'string') return data;
-      if (data.reply) return data.reply;
-      if (data.choices && data.choices[0] && data.choices[0].message) {
-        const content = data.choices[0].message.content;
-        try {
-          const parsed = JSON.parse(content);
-          return parsed.reply || content;
-        } catch(e) { return content; }
-      }
-      return JSON.stringify(data);
+    try {
+      const makeResult = JSON.parse(responseText);
+      finalReply = makeResult.reply || makeResult.message || responseText;
+    } catch (e) {
+      finalReply = responseText;
     }
 
-    finalReply = extractReply(makeResult);
-    
-    console.log(`🤖 الرد: ${finalReply}`);
+    console.log(`🤖 الرد: ${finalReply.substring(0, 100)}`);
     
     res.json({
       reply: finalReply,
-      emotion: finalEmotion,
-      intent: finalIntent,
     });
   } catch (error) {
     console.error("Make.com error:", error);
     res.json({
       reply: "عذراً، حدث خطأ تقني. يرجى المحاولة مرة أخرى لاحقاً.",
-      emotion: "neutral",
-      intent: "other",
     });
   }
 });
@@ -377,8 +382,10 @@ app.get("/test-make", async (req, res) => {
 // ============================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
+  console.log(`\n========================================`);
   console.log(`🚀 خادم Automatix يعمل على المنفذ ${PORT}`);
   console.log(`✅ جاهز لاستقبال الطلبات وWebhooks من Meta`);
   console.log(`🔗 رابط التحقق: https://my-node-app-production-5923.up.railway.app/health`);
   console.log(`🔗 رابط Webhook: https://my-node-app-production-5923.up.railway.app/webhook`);
+  console.log(`========================================\n`);
 });
